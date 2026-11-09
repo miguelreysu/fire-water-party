@@ -4,7 +4,7 @@ import sharp from 'sharp';
 import {v2 as cloudinary} from 'cloudinary';
 import handler from '../api/index.js';
 import {seal,unseal,session,validPhotoId,sameOrigin} from '../server/security.js';
-import {defaults,validSettings,shuffle} from '../src/shared.js';
+import {defaults,validSettings,shuffle,eventSettings} from '../src/shared.js';
 const secret='test-session-secret-32-characters-minimum';
 Object.assign(process.env,{CLOUDINARY_CLOUD_NAME:'unit-test',CLOUDINARY_API_KEY:'test-key',CLOUDINARY_API_SECRET:'test-secret',SESSION_SECRET:secret,ADMIN_PASSWORD:'testing-host-password-only',GUEST_CODE:'test-guest-code',APP_ORIGIN:'http://localhost:5173',EVENT_ID:'fire-water'});
 let stored=new Map(),settingsData=null,uploads=0;
@@ -27,10 +27,13 @@ test('server authorization, 300 concurrent optimized uploads, approval, delete, 
  const login=await request('login',{body:{role:'admin',password:process.env.ADMIN_PASSWORD}});assert.equal(login.code,200);assert.match(login.headers['Set-Cookie'],/HttpOnly; SameSite=Strict/);
  const jpg=await sharp({create:{width:1800,height:1200,channels:3,background:'#dd8751'}}).jpeg().toBuffer();const image='data:image/jpeg;base64,'+jpg.toString('base64');
  const guest=session('guest',secret);
- assert.equal((await request('upload',{body:{image,slot:0,consent:true}})).code,401);
- assert.equal((await request('upload',{body:{image,slot:0,consent:false},token:guest})).code,400);
- assert.equal((await request('upload',{body:{image,slot:5,consent:true},token:guest})).code,400);
- const before=Date.now();const results=await Promise.all(Array.from({length:300},()=>request('upload',{body:{image,slot:0,consent:true},token:session('guest',secret)})));assert.ok(results.every(r=>r.code===200),JSON.stringify(results.filter(r=>r.code!==200).slice(0,2)));assert.equal(stored.size,300);
+ assert.equal((await request('upload',{body:{image,slot:0}})).code,401);
+ const anonymous=await request('guest',{body:{}});assert.equal(anonymous.code,200);assert.match(anonymous.headers['Set-Cookie'],/fw_guest=.*HttpOnly; SameSite=Strict/);
+ assert.equal((await request('guest',{body:{},origin:'https://evil.test'})).code,403);
+ const anonymousToken=anonymous.headers['Set-Cookie'].split(';')[0].split('=')[1];const reused=await request('guest',{body:{},token:anonymousToken});assert.equal(reused.headers['Set-Cookie'].split(';')[0].split('=')[1],anonymousToken);
+ assert.equal((await request('login',{body:{role:'guest',password:'anything'}})).code,401);
+ assert.equal((await request('upload',{body:{image,slot:5},token:guest})).code,400);
+ const before=Date.now();const results=await Promise.all(Array.from({length:300},()=>request('upload',{body:{image,slot:0},token:session('guest',secret)})));assert.ok(results.every(r=>r.code===200),JSON.stringify(results.filter(r=>r.code!==200).slice(0,2)));assert.equal(stored.size,300);
  console.log(`MOCKED PROVIDER: 300 concurrent uploads in ${Date.now()-before}ms; ${[...stored.values()].reduce((n,p)=>n+p.bytes,0)} bytes stored`);
  assert.equal((await request('photos')).data.photos.length,0);
  const id=results[0].data.id;assert.equal((await request('moderate',{body:{id,operation:'approve'},token:admin,role:'admin'})).code,200);
@@ -38,12 +41,15 @@ test('server authorization, 300 concurrent optimized uploads, approval, delete, 
  assert.equal((await request('export',{token:admin,role:'admin'})).data.photos.length,300);
  assert.equal((await request('moderate',{body:{id,operation:'delete'},token:admin,role:'admin'})).code,200);assert.equal((await request('photos')).data.photos.length,0);
  await request('settings',{body:{...defaults,uploadsEnabled:false},token:admin,role:'admin'});
- assert.equal((await request('upload',{body:{image,slot:1,consent:true},token:guest})).code,403);
+ assert.equal((await request('guest',{body:{}})).code,403);
+ assert.equal((await request('upload',{body:{image,slot:1},token:guest})).code,403);
  await request('settings',{body:{...defaults,autoApprove:true},token:admin,role:'admin'});
- assert.equal((await request('upload',{body:{image,slot:1,consent:true},token:guest})).code,200);assert.equal((await request('photos')).data.photos.length,1);
+ assert.equal((await request('upload',{body:{image,slot:1},token:guest})).code,200);assert.equal((await request('photos')).data.photos.length,1);
  for(let i=0;i<1300;i++)stored.set(`fire-water/${i.toString(16).padStart(32,'0')}/3`,{public_id:`fire-water/${i.toString(16).padStart(32,'0')}/3`,tags:['approved'],bytes:100,version:1});
  await request('moderate',{body:{id:results[1].data.id,operation:'approve'},token:admin,role:'admin'});
  const paged=await request('photos',{token:admin,role:'admin',query:{admin:'1'}});assert.equal(paged.data.photos.length,1600);
 });
 
 test('setup mode never treats an anonymous visitor as a signed-in host',async()=>{const old=process.env.CLOUDINARY_API_SECRET;delete process.env.CLOUDINARY_API_SECRET;try{assert.equal((await request('photos')).code,200);assert.equal((await request('photos',{query:{admin:'1'}})).code,503);assert.equal((await request('settings',{body:defaults})).code,503);}finally{process.env.CLOUDINARY_API_SECRET=old}});
+
+test('single-event guest setup needs no code and old placeholder content is upgraded',async()=>{const old=process.env.GUEST_CODE;delete process.env.GUEST_CODE;try{assert.equal((await request('health')).data.configured,true);}finally{if(old)process.env.GUEST_CODE=old}const migrated=eventSettings({...defaults,title:'Fire & Water',tagline:'Two elements. One unforgettable night.',uploadsEnabled:false,autoApprove:true});assert.equal(migrated.title,'Amicus Parallel');assert.equal(migrated.tagline,'Fire & Ice Masquerade');assert.equal(migrated.uploadsEnabled,false);assert.equal(migrated.autoApprove,true);assert.equal(eventSettings({...defaults,description:'Host-edited description'}).description,'Host-edited description');});

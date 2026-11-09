@@ -1,11 +1,11 @@
-# Fire & Water
+# Amicus Parallel — Fire & Ice Masquerade
 
-A mobile-first personal party website. React/Vite on Vercel Hobby, Cloudinary Free, no database and no paid API. Guest site `/`, slideshow `/screen`, host studio `/admin`, printable QR `/qr`.
+A mobile-first website for Amicus Civitas’ Amicus Parallel: Fire & Ice Masquerade. React/Vite on Vercel Hobby, Cloudinary Free, no database and no paid API. Guest site `/`, slideshow `/screen`, host studio `/admin`, printable QR `/qr`.
 
 ## Current verification status
 
 - Production build succeeds.
-- Seven automated tests exercise authentication, CSRF, consent, JPEG upload validation, 300 simultaneous requests (Cloudinary mocked), moderation, deletion, upload pause, export, listing over 1,500 photos, and offline cache replay/eviction/removal.
+- Eight automated tests exercise authentication, CSRF, code-free guest session creation, JPEG upload validation, 300 simultaneous requests (Cloudinary mocked), moderation, deletion, upload pause, export, listing over 1,500 photos, and offline cache replay/eviction/removal.
 - Desktop Chromium review completed for home, navigation, info, and the protected upload setup state.
 - Live Cloudinary storage, Vercel capacity, QR scanning on actual phones, iOS Safari, Android Chrome, and live offline slideshow acceptance still require the configured deployment. A mocked provider test is not a Cloudinary/Vercel load test.
 - No paid service, subscription, credit card, or database has been configured.
@@ -18,8 +18,8 @@ Use Node 22 or 24. `npm ci`, then `npm run dev`. The dev server defaults to loca
 
 1. Create a new personal GitHub repository and push this directory. Do not reuse an unrelated repository. Keep `.env` files out of Git.
 2. Create a Vercel project on **Hobby**, importing that repository (or deploy these source files through the Vercel API). Framework: Vite; build `npm run build`; output `dist`; Node 22 or 24. The included `vercel.json` routes API requests and the SPA.
-3. In Vercel's server-side production environment, configure `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `SESSION_SECRET`, `ADMIN_PASSWORD`, `GUEST_CODE`, `EVENT_ID`, and `APP_ORIGIN`. None have a `VITE_` prefix. Never paste secrets into a GitHub file or client code.
-4. Generate independent random host and session secrets (e.g. `openssl rand -hex 32`). Host password minimum 16 characters, session secret minimum 32, guest code minimum 6. `EVENT_ID` is lower-case letters, digits and hyphens, at most 40 characters. `APP_ORIGIN` is the exact production HTTPS origin without trailing slash.
+3. In Vercel's server-side production environment, configure `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `SESSION_SECRET`, `ADMIN_PASSWORD`, `EVENT_ID`, and `APP_ORIGIN`. None have a `VITE_` prefix. Never paste secrets into a GitHub file or client code.
+4. Generate independent random host and session secrets (e.g. `openssl rand -hex 32`). Host password minimum 16 characters, session secret minimum 32. `EVENT_ID` is lower-case letters, digits and hyphens, at most 40 characters. `APP_ORIGIN` is the exact production HTTPS origin without trailing slash.
 5. Use a free Cloudinary account with no unsigned upload preset. Authenticated image and raw asset uploads, signed delivery, Admin API resource listings, and raw private downloads must be enabled. The app creates its settings JSON on first Save. Pending images are uploaded with `type: authenticated`; never make that folder publicly accessible or configure an anonymous access window.
 6. Redeploy after changing environment variables. `/api/health` must say `configured: true`. This confirms variable presence/length only, not credential validity; perform an upload and settings save to verify Cloudinary.
 7. Production guest pages must be public to visitors without Vercel login. Preview deployments may remain protected. Test the production URL in a signed-out browser.
@@ -27,9 +27,9 @@ Use Node 22 or 24. `npm ci`, then `npm run dev`. The dev server defaults to loca
 ## Host guide
 
 - Open `/admin`; use the host password. Eight-hour HttpOnly, Secure, SameSite=Strict cookies protect server actions.
-- Edit provisional event details, schedule, consent/removal text and upload/approval switches. Press **Save event settings**.
+- Edit provisional event details, schedule, removal text and upload/approval switches. Press **Save event settings**.
 - Manual approval is the default. Refresh the host photo list, review thumbnails, approve individually or up to 50 in a batch. Auto-approve applies only to future uploads.
-- Share the event code privately with guests. The QR contains only the guest website URL. Guests enter the code, select up to five photos, and consent.
+- Share the guest website or QR with attendees. Guests select up to five photos and upload directly; no event code, account, or consent checkbox is shown. A signed HttpOnly browser session is created automatically. A small removal note remains under the upload button.
 - Open `/screen` on the display computer. Full screen uses the browser API where available; on iOS use the browser's available display controls. Keep the tab visible and device awake. No autoplay audio is used.
 - The screen polls every 30 seconds. Cached lists can add up to roughly 30 seconds of discovery delay, so allow about a minute after moderation. New IDs are prioritized, followed by shuffled rotation; every fifth slide can be a three-photo collage. Each slide lasts eight seconds.
 - Removal deletes the cloud copy and requests CDN invalidation. Connected screens drop it on the next successful list refresh. The app cannot recall downloaded images, screen captures, third-party caches, or offline copies before reconnection. Never promise immediate universal revocation.
@@ -54,7 +54,7 @@ Cloudinary currently publishes 25 shared credits, not separate 25 GB storage and
 
 Backend-mediated signed Cloudinary uploads keep all upload signatures and secrets server-side, rather than issuing reusable client upload signatures. There is no unsigned preset. Re-encoding rejects non-JPEG content and caps input pixels. Pending assets receive no guest-facing signed URL. Signed approved URLs are bearer links and can be shared by recipients.
 
-A signed guest cookie provides five non-overwritable public IDs per session, plus a private event code. This is a best-effort abuse barrier, not a strict five-per-human quota: clearing cookies, using another browser, or learning the shared code can obtain a new session. In-memory login throttles are per instance, not a globally enforced rate limit. Strict distributed guest quotas or guaranteed hard total-photo caps would require durable atomic state (a database or equivalent). Those are intentionally not claimed. Use a strong private code, manual approval, and the upload switch. Additional platform firewall protection can be configured if needed without introducing a paid plan.
+A signed guest cookie provides five non-overwritable public IDs per browser session. There is no guest code: anyone with the website URL can upload, as requested for this single event. This is a best-effort abuse barrier, not a strict five-per-human quota: clearing cookies or using another browser can obtain a new session. In-memory login throttles are per instance, not a globally enforced rate limit. Strict distributed guest quotas or guaranteed hard total-photo caps would require durable atomic state (a database or equivalent). Those are intentionally not claimed. Keep the URL within your guest group and use manual approval and the upload switch. Additional platform firewall protection can be configured if needed without introducing a paid plan.
 
 Settings are a small authenticated raw Cloudinary JSON asset, intended for one host editing at a time. Multiple simultaneous host saves use last-writer-wins. Moderation uses atomic tag operations, with Cloudinary as the durable source of truth. Cache is never the sole copy of settings or image data. No database is required for this event scope.
 
@@ -62,10 +62,16 @@ Settings are a small authenticated raw Cloudinary JSON asset, intended for one h
 
 1. Scan `/qr` on iOS Safari and Android Chrome, signed out of Vercel.
 2. Upload a real phone JPEG and supported HEIC through Safari's image decoder; unsupported formats show a conversion message. Confirm saved dimensions, bytes, and metadata stripping.
-3. Try wrong codes, missing consent, oversize/invalid content and direct unauthorized admin requests.
+3. Test code-free guest session creation, oversize/invalid content and direct unauthorized admin requests.
 4. Confirm pending photo IDs and URLs are absent from `/api/photos`, and unsigned Cloudinary delivery cannot retrieve them.
 5. Approve; verify automatic screen discovery. Upload with auto-approve enabled and verify again.
 6. Keep screen playing, disconnect Wi-Fi, then reconnect. Remove a cached photo from another device; confirm it is purged on screen reconnection.
 7. Test parallel real uploads with a small disclosed test batch first; scale carefully while watching Cloudinary credits, API limits, Vercel CPU/invocations and response errors. Mock tests do not establish production throughput.
 8. Export a ZIP, pause uploads and confirm rejections, resume and retry. Open a saved QR from paper.
 9. Keep this checklist pending until performed against the live configured service. Delete test assets afterward only when authorized.
+
+## Branding and current checks
+
+The association logo is sourced from the official Amicus Civitas website: https://www.amicuscivitas.com/ (footer asset Amicus_Logo__1_-removebg-preview.png). The downloaded CDN asset is WebP and is stored with its real .webp extension; CSS crops its transparent outer canvas without redrawing the logo. The masquerade decoration is a native SVG. The specific Fire & Ice Instagram post could not be retrieved; its date, venue and exact event artwork have not been inferred. Uploading that post will allow a precise visual match.
+
+Live backend checks previously passed nine real Cloudinary uploads (eight concurrent), pending-asset protection, approval, signed delivery, export, pause, automatic approval, and deletion/restoration. That test used a temporary standalone runner and is not part of any build command. Current guest-code/checkbox removal is covered by the updated eight local tests, including 300 mocked concurrent uploads. iOS/Android device verification remains outstanding.

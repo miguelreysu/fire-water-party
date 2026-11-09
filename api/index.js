@@ -1,14 +1,14 @@
 import {getCache} from '@vercel/functions';
 import {v2 as cloudinary} from 'cloudinary';
 import sharp from 'sharp';
-import {defaults,validSettings} from '../src/shared.js';
+import {defaults,validSettings,eventSettings} from '../src/shared.js';
 import {safeEqual,session,unseal,cookies,cookie,sameOrigin,validPhotoId} from '../server/security.js';
 export const config={api:{bodyParser:{sizeLimit:'900kb'}}};
 const cache=new Map(), attempts=new Map();
 const E=()=>process.env;
 const event=()=>/^[a-z0-9-]{1,40}$/.test(E().EVENT_ID||'')?E().EVENT_ID:'fire-water';
 function configure(){cloudinary.config({cloud_name:E().CLOUDINARY_CLOUD_NAME,api_key:E().CLOUDINARY_API_KEY,api_secret:E().CLOUDINARY_API_SECRET,secure:true});}
-const configured=()=>['CLOUDINARY_CLOUD_NAME','CLOUDINARY_API_KEY','CLOUDINARY_API_SECRET','SESSION_SECRET','ADMIN_PASSWORD','GUEST_CODE','APP_ORIGIN'].every(k=>E()[k])&&E().SESSION_SECRET.length>=32&&E().ADMIN_PASSWORD.length>=16&&E().GUEST_CODE.length>=6;
+const configured=()=>['CLOUDINARY_CLOUD_NAME','CLOUDINARY_API_KEY','CLOUDINARY_API_SECRET','SESSION_SECRET','ADMIN_PASSWORD','APP_ORIGIN'].every(k=>E()[k])&&E().SESSION_SECRET.length>=32&&E().ADMIN_PASSWORD.length>=16;
 function remoteCache(){return E().VERCEL==='1'?getCache({namespace:'fw:'+E().CLOUDINARY_CLOUD_NAME+':'+event()}):null}
 async function invalidate(key){cache.delete(key);try{await remoteCache()?.delete(key)}catch{}}
 async function memo(key,ttl,fn){
@@ -16,7 +16,7 @@ async function memo(key,ttl,fn){
  let x=cache.get(key);if(!remote&&x&&x.until>Date.now())return x.value;if(x?.promise)return x.promise;
  const promise=fn().then(async value=>{cache.set(key,{until:Date.now()+ttl,value});try{await remote?.set(key,value,{ttl:Math.ceil(ttl/1000),name:'fire-water-'+key})}catch{}return value}).catch(e=>{cache.delete(key);throw e});cache.set(key,{promise});return promise;
 }
-async function settings(){return memo('settings',5000,async()=>{const url=cloudinary.utils.private_download_url(`${event()}/settings.json`,'',{resource_type:'raw',type:'authenticated',expires_at:Math.floor(Date.now()/1000)+60});const r=await fetch(url);if(r.status===404)return {...defaults};if(!r.ok)throw Error('Settings unavailable');const s=await r.json();if(!validSettings(s))throw Error('Invalid settings');return s})}
+async function settings(){return memo('settings',5000,async()=>{const url=cloudinary.utils.private_download_url(`${event()}/settings.json`,'',{resource_type:'raw',type:'authenticated',expires_at:Math.floor(Date.now()/1000)+60});const r=await fetch(url);if(r.status===404)return {...defaults};if(!r.ok)throw Error('Settings unavailable');const s=await r.json();if(!validSettings(s))throw Error('Invalid settings');return eventSettings(s)})}
 async function saveSettings(s){await cloudinary.uploader.upload('data:application/json;base64,'+Buffer.from(JSON.stringify(s)).toString('base64'),{resource_type:'raw',type:'authenticated',public_id:`${event()}/settings.json`,overwrite:true,invalidate:true});await invalidate('settings');}
 function photo(r){return {id:r.public_id,created:r.created_at,bytes:r.bytes,approved:(r.tags||[]).includes('approved'),url:cloudinary.url(r.public_id,{type:'authenticated',resource_type:'image',format:'jpg',version:r.version,sign_url:true,secure:true}),thumb:cloudinary.url(r.public_id,{type:'authenticated',resource_type:'image',format:'jpg',version:r.version,transformation:[{width:480,crop:'limit',quality:65}],sign_url:true,secure:true})}}
 async function allPhotos(){return memo('photos',25000,async()=>{let next_cursor,out=[];do{const page=await cloudinary.api.resources({resource_type:'image',type:'authenticated',prefix:event()+'/',max_results:500,tags:true,...(next_cursor?{next_cursor}:{})});out.push(...page.resources);next_cursor=page.next_cursor;if(out.length>3000)throw Error('Photo safety limit reached');}while(next_cursor);return out.filter(r=>validPhotoId(r.public_id,event())).map(photo)})}
@@ -35,9 +35,12 @@ export default async function handler(req,res){
  const c=cookies(req), admin=unseal(c.fw_admin,E().SESSION_SECRET,'admin'),guest=unseal(c.fw_guest,E().SESSION_SECRET,'guest');
  let body=req.body||{};if(typeof body==='string'){try{body=JSON.parse(body)}catch{throw error(400,'Invalid JSON')}}
  const ip=req.headers['x-forwarded-for']?.split(',')[0]||'local';
+ if(action==='guest'&&req.method==='POST'){
+ const s=await settings();if(!s.uploadsEnabled)throw error(403,'Uploads are paused by the host');
+ res.setHeader('Set-Cookie',cookie('fw_guest',guest?c.fw_guest:session('guest',E().SESSION_SECRET),E().APP_ORIGIN.startsWith('https:'),172800));return send(200,{ok:true});}
  if(action==='login'&&req.method==='POST'){
  if(limited('login:'+ip,20))throw error(429,'Too many attempts. Wait a minute.');
- const role=body.role==='admin'?'admin':'guest';if(!safeEqual(body.password,role==='admin'?E().ADMIN_PASSWORD:E().GUEST_CODE))throw error(401,'Incorrect code or password');
+ const role='admin';if(body.role!=='admin'||!safeEqual(body.password,E().ADMIN_PASSWORD))throw error(401,'Incorrect code or password');
  res.setHeader('Set-Cookie',cookie('fw_'+role,role==='guest'&&guest?c.fw_guest:session(role,E().SESSION_SECRET),E().APP_ORIGIN.startsWith('https:'),role==='admin'?28800:172800));return send(200,{ok:true});}
  if(action==='logout'&&req.method==='POST'){res.setHeader('Set-Cookie',cookie('fw_admin','',E().APP_ORIGIN.startsWith('https:'),0));return send(200,{ok:true});}
  if(action==='settings'&&req.method==='GET'){const s=await settings();return send(200,s)}
@@ -47,9 +50,8 @@ export default async function handler(req,res){
  if(!isAdmin)res.setHeader('Cache-Control','public, max-age=0, s-maxage=5, must-revalidate');
  return send(200,{photos:list});}
  if(action==='upload'&&req.method==='POST'){
- if(!guest)throw error(401,'Enter the event code first');
+ if(!guest)throw error(401,'Please retry your upload');
  const s=await settings();if(!s.uploadsEnabled)throw error(403,'Uploads are paused by the host');
- if(body.consent!==true)throw error(400,'Photo consent is required');
  if(!Number.isInteger(body.slot)||body.slot<0||body.slot>4)throw error(400,'Five photos per browser are allowed');
  if(typeof body.image!=='string'||body.image.length>820000||!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(body.image))throw error(400,'Please upload a JPEG under 600 KB');
  const bytes=Buffer.from(body.image.split(',')[1],'base64');if(bytes.length>614400)throw error(413,'Image too large');

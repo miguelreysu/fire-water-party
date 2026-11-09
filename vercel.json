@@ -13,7 +13,7 @@
       "destination": "/api/index?action=:action"
     },
     {
-      "source": "/((?!api/|assets/|sw.js).*)",
+      "source": "/((?!api/|assets/|sw.js|amicus-civitas-logo.webp|masquerade-mask.svg).*)",
       "destination": "/index.html"
     }
   ],
