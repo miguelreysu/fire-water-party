@@ -1,0 +1,3 @@
+export const PHOTO_CACHE='fw-screen-images-v1';
+export async function loadPhoto(p,{storage=globalThis.caches,fetcher=globalThis.fetch}={}){const cache=await storage.open(PHOTO_CACHE);let r=await cache.match(p.url);if(!r){r=await fetcher(p.url,{mode:'cors'});if(!r.ok)throw Error('Photo unavailable');try{await cache.put(p.url,r.clone());const keys=await cache.keys();if(keys.length>80)await cache.delete(keys[0]);}catch{}}return r.blob()}
+export async function purgePhotos(photos,storage=globalThis.caches){const cache=await storage.open(PHOTO_CACHE),allowed=new Set(photos.map(p=>p.url));for(const k of await cache.keys())if(!allowed.has(k.url))await cache.delete(k)}

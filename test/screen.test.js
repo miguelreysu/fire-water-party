@@ -1,0 +1,6 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {loadPhoto,purgePhotos} from '../src/screen-cache.js';
+function memoryCache(){const m=new Map();const cache={match:async k=>m.get(k)?.clone(),put:async(k,v)=>m.set(k,v),keys:async()=>[...m.keys()].map(url=>({url})),delete:async k=>m.delete(typeof k==='string'?k:k.url)};return {m,open:async()=>cache};}
+test('screen replays cached photos without internet and purges removed photos',async()=>{const storage=memoryCache();let online=true,requests=0;const fetcher=async()=>{requests++;if(!online)throw Error('Disconnected');return new Response('photo bytes',{status:200})};const p={url:'https://example.test/photo.jpg'};assert.equal(await(await loadPhoto(p,{storage,fetcher})).text(),'photo bytes');online=false;assert.equal(await(await loadPhoto(p,{storage,fetcher})).text(),'photo bytes');assert.equal(requests,1);await purgePhotos([],storage);assert.equal(storage.m.size,0);await assert.rejects(()=>loadPhoto(p,{storage,fetcher}),/Disconnected/)});
+test('screen bounds its offline cache to 80 photos',async()=>{const storage=memoryCache();for(let i=0;i<100;i++)await loadPhoto({url:'https://example.test/'+i},{storage,fetcher:async()=>new Response('photo')});assert.equal(storage.m.size,80);assert.equal(storage.m.has('https://example.test/0'),false)});
